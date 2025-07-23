@@ -1,86 +1,126 @@
 const express = require('express');
-const path = require('path');
-const bodyParser = require('body-parser');
-const mysql = require('mysql');
+const mysql = require('mysql2');
+const cors = require('cors');
+const bodyParser = require("body-parser");
+const path = require("path");
 
 const app = express();
 const PORT = 3000;
 
-// ✅ MySQL database connection
-const db = mysql.createConnection({
-  host: 'localhost',
-  user: 'root',
-  password: 'rao@123',
-  database: 'purple_clone'
-});
-
-db.connect((err) => {
-  if (err) {
-    console.error('❌ MySQL connection failed:', err.stack);
-    return;
-  }
-  console.log('✅ Connected to MySQL as ID ' + db.threadId);
-});
-
-// ✅ Middleware
-app.use(express.static(path.join(__dirname))); // Serve static files (HTML, CSS, JS)
+// Middleware
+app.use(cors());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-// ✅ Routes to serve HTML files
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'home.html'));
+// Debug Logger
+app.use((req, res, next) => {
+  console.log(`[${req.method}] ${req.url}`);
+  next();
 });
 
-app.get('/signup', (req, res) => {
-  res.sendFile(path.join(__dirname, 'signup.html'));
+app.use(express.static(path.join(__dirname, "../frontend")));
+
+// MySQL Connection
+const db = mysql.createConnection({
+  host: 'database-1.c3aooyk44z85.us-west-1.rds.amazonaws.com',
+  user: 'admin',
+  password: 'Shreshta12345',  // Update this if needed
+  database: 'purple'
 });
 
-app.get('/login', (req, res) => {
-  res.sendFile(path.join(__dirname, 'login.html'));
-});
-
-// ✅ Signup route
-app.post('/signup', (req, res) => {
-  const { fullName, email, password, confirmPassword } = req.body;
-
-  if (password !== confirmPassword) {
-    return res.status(400).send('❌ Passwords do not match.');
+// Connect to DB
+db.connect((err) => {
+  if (err) {
+    console.error('DB connection failed:', err);
+    return;
   }
+  console.log('✅ Connected to MySQL database');
+});
 
-  const checkQuery = 'SELECT * FROM signup WHERE email = ?';
-  db.query(checkQuery, [email], (err, results) => {
-    if (err) return res.status(500).send('❌ Database error.');
-    if (results.length > 0) {
-      return res.status(400).send('❌ User already exists.');
+// ------------------ HEALTH ENDPOINTS ------------------
+
+// Basic liveness check for Load Balancer health checks.
+// Always responds quickly with 200 OK if Node process + network stack are up.
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
+// Optional deeper readiness check: verifies DB connectivity.
+// DO NOT point ALB health checks here if DB outages would cause scale-out thrash.
+app.get('/ready', (req, res) => {
+  db.ping((err) => {
+    if (err) {
+      console.error('DB ping failed:', err);
+      return res.status(500).send('DB error');
     }
-
-    const insertQuery = 'INSERT INTO signup (fullName, email, password, confirmPassword) VALUES (?, ?, ?, ?)';
-    db.query(insertQuery, [fullName, email, password, confirmPassword], (err) => {
-      if (err) return res.status(500).send('❌ Signup failed.');
-      console.log(`✅ New user stored: ${email}`);
-      res.redirect('/login'); // ✅ Redirect to login page after signup
-    });
+    res.status(200).send('READY');
   });
 });
 
-// ✅ Login route
+// ------------------------------------------------------
+
+// Serve main page
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "../frontend/signup.html"));
+});
+
+// ===================== SIGNUP ROUTE =====================
+app.post('/signup', (req, res) => {
+  const { fullname, email, password, confirmPassword } = req.body;
+
+  if (password !== confirmPassword) {
+    return res.status(400).json({ error: 'Passwords do not match' });
+  }
+
+  const sql = 'INSERT INTO signup (fullname, email, password) VALUES (?, ?, ?)';
+  db.query(sql, [fullname, email, password], (err, result) => {
+    if (err) {
+      console.error('Error inserting signup:', err);
+      return res.status(500).json({ error: 'Database error' });
+    }
+    res.status(200).json({ message: 'Signup successful' });
+  });
+});
+
+// ===================== LOGIN ROUTE =====================
 app.post('/login', (req, res) => {
   const { email, password } = req.body;
 
-  const query = 'SELECT * FROM signup WHERE email = ? AND password = ?';
-  db.query(query, [email, password], (err, results) => {
-    if (err) return res.status(500).send('❌ Database error.');
+  const sql = 'SELECT * FROM signup WHERE email = ? AND password = ?';
+  db.query(sql, [email, password], (err, results) => {
+    if (err) {
+      console.error('Login error:', err);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
     if (results.length > 0) {
-      console.log(`🔓 Login successful for: ${email}`);
-      res.send('✅ Login successful! Welcome to Purple Clone.');
+      res.status(200).json({ message: 'Login successful', user: results[0] });
     } else {
-      res.status(401).send('❌ Invalid email or password.');
+      res.status(401).json({ error: 'Invalid email or password' });
     }
   });
 });
 
-// ✅ Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
+// ===================== CONTACT ROUTE =====================
+app.post('/contact', (req, res) => {
+  const { name, email, message } = req.body;
+
+  if (!name || !email || !message) {
+    return res.status(400).json({ error: 'All fields are required' });
+  }
+
+  const sql = 'INSERT INTO contact (name, email, message) VALUES (?, ?, ?)';
+  db.query(sql, [name, email, message], (err, result) => {
+    if (err) {
+      console.error('Error inserting contact message:', err);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    res.status(200).json({ message: 'Message received successfully!' });
+  });
+});
+
+// ===================== START SERVER =====================
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running at http://0.0.0.0:${PORT}`);
 });
