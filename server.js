@@ -1,125 +1,128 @@
-const express = require('express');
-const mysql = require('mysql2');
-const cors = require('cors');
-const path = require("path");
+require("dotenv").config();
+
+const express = require("express");
+const mysql = require("mysql2");
+const cors = require("cors");
+const axios = require("axios");
+const bcrypt = require("bcrypt");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Debug Logger
-app.use((req, res, next) => {
-  console.log(`[${req.method}] ${req.url}`);
-  next();
-});
-
-app.use(express.static(path.join(__dirname, "../frontend")));
-
 // MySQL Connection
 const db = mysql.createConnection({
-  host: 'database-1.c3aooyk44z85.us-west-1.rds.amazonaws.com',
-  user: 'admin',
-  password: 'Shreshta12345',  // Update this if needed
-  database: 'purple'
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME
 });
 
-// Connect to DB
 db.connect((err) => {
   if (err) {
-    console.error('DB connection failed:', err);
-    return;
+    console.error("❌ Database connection failed:", err);
+  } else {
+    console.log("✅ Connected to MySQL database");
   }
-  console.log('✅ Connected to MySQL database');
 });
 
-// ------------------ HEALTH ENDPOINTS ------------------
-
-// Basic liveness check for Load Balancer health checks.
-// Always responds quickly with 200 OK if Node process + network stack are up.
-app.get('/health', (req, res) => {
-  res.status(200).send('OK');
+// Health check
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
 });
 
-// Optional deeper readiness check: verifies DB connectivity.
-// DO NOT point ALB health checks here if DB outages would cause scale-out thrash.
-app.get('/ready', (req, res) => {
-  db.ping((err) => {
-    if (err) {
-      console.error('DB ping failed:', err);
-      return res.status(500).send('DB error');
-    }
-    res.status(200).send('READY');
-  });
-});
-
-// ------------------------------------------------------
-
-// Serve main page
+// Root
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "../frontend/signup.html"));
+  res.send("🚀 Zepto Backend is running!");
 });
 
-// ===================== SIGNUP ROUTE =====================
-app.post('/signup', (req, res) => {
-  const { fullname, email, password, confirmPassword } = req.body;
-
-  if (password !== confirmPassword) {
-    return res.status(400).json({ error: 'Passwords do not match' });
+// Signup
+app.post("/signup", async (req, res) => {
+  const { username, email, password } = req.body;
+  if (!username || !email || !password) {
+    return res.status(400).json({ message: "All fields are required" });
   }
 
-  const sql = 'INSERT INTO signup (fullname, email, password) VALUES (?, ?, ?)';
-  db.query(sql, [fullname, email, password], (err, result) => {
-    if (err) {
-      console.error('Error inserting signup:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.status(200).json({ message: 'Signup successful' });
-  });
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const sql = "INSERT INTO signup_users (username, email, password) VALUES (?, ?, ?)";
+    db.query(sql, [username, email, hashedPassword], (err) => {
+      if (err) {
+        if (err.code === "ER_DUP_ENTRY") {
+          return res.status(409).json({ message: "Email already registered." });
+        }
+        console.error("❌ Insert error:", err);
+        return res.status(500).json({ message: "Database error." });
+      }
+      res.status(201).json({ message: "Signup successful!" });
+    });
+  } catch {
+    res.status(500).json({ message: "Server error." });
+  }
 });
 
-// ===================== LOGIN ROUTE =====================
-app.post('/login', (req, res) => {
+// Login
+app.post("/login", (req, res) => {
   const { email, password } = req.body;
-
-  const sql = 'SELECT * FROM signup WHERE email = ? AND password = ?';
-  db.query(sql, [email, password], (err, results) => {
-    if (err) {
-      console.error('Login error:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-
-    if (results.length > 0) {
-      res.status(200).json({ message: 'Login successful', user: results[0] });
-    } else {
-      res.status(401).json({ error: 'Invalid email or password' });
-    }
-  });
-});
-
-// ===================== CONTACT ROUTE =====================
-app.post('/contact', (req, res) => {
-  const { name, email, message } = req.body;
-
-  if (!name || !email || !message) {
-    return res.status(400).json({ error: 'All fields are required' });
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password are required." });
   }
 
-  const sql = 'INSERT INTO contact (name, email, message) VALUES (?, ?, ?)';
-  db.query(sql, [name, email, message], (err, result) => {
+  const sql = "SELECT * FROM signup_users WHERE email = ?";
+  db.query(sql, [email], async (err, results) => {
     if (err) {
-      console.error('Error inserting contact message:', err);
-      return res.status(500).json({ error: 'Database error' });
+      console.error("❌ Login query error:", err);
+      return res.status(500).json({ message: "Something went wrong." });
+    }
+    if (results.length === 0) {
+      return res.status(401).json({ message: "Invalid email or password." });
     }
 
-    res.status(200).json({ message: 'Message received successfully!' });
+    const user = results[0];
+    const passwordMatch = await bcrypt.compare(password, user.password);
+
+    if (!passwordMatch) {
+      return res.status(401).json({ message: "Invalid email or password." });
+    }
+
+    return res.status(200).json({ message: "Login successful!", username: user.username });
   });
 });
 
-// ===================== START SERVER =====================
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running at http://0.0.0.0:${PORT}`);
+// Contact form
+app.post("/contact", (req, res) => {
+  const { name, email, message } = req.body;
+  if (!name || !email || !message) {
+    return res.status(400).json({ message: "All fields are required." });
+  }
+
+  const sql = "INSERT INTO contact_messages (name, email, message) VALUES (?, ?, ?)";
+  db.query(sql, [name, email, message], (err) => {
+    if (err) {
+      console.error("❌ Contact insert error:", err);
+      return res.status(500).json({ message: "Database error." });
+    }
+    res.status(201).json({ message: "Message stored successfully!" });
+  });
+});
+
+
+// Internal test route
+app.get("/call-private", async (req, res) => {
+  try {
+    const response = await axios.get("http://10.0.3.14:3000/ping");
+    res.json({ message: "Success from private EC2", data: response.data });
+  } catch (error) {
+    console.error("❌ Error contacting private EC2:", error.message);
+    res.status(500).json({ message: "Failed to contact private EC2" });
+  }
+});
+
+// Start server
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
 });
