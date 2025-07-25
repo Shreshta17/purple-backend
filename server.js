@@ -24,14 +24,14 @@ app.use(express.static(path.join(__dirname, "../frontend")));
 const db = mysql.createConnection({
   host: 'database-1.c3aooyk44z85.us-west-1.rds.amazonaws.com',
   user: 'admin',
-  password: 'Shreshta12345',  // Update this if needed
+  password: 'Shreshta12345',
   database: 'purple'
 });
 
 // Connect to DB
 db.connect((err) => {
   if (err) {
-    console.error('DB connection failed:', err);
+    console.error('❌ DB connection failed:', err);
     return;
   }
   console.log('✅ Connected to MySQL database');
@@ -39,14 +39,10 @@ db.connect((err) => {
 
 // ------------------ HEALTH ENDPOINTS ------------------
 
-// Basic liveness check for Load Balancer health checks.
-// Always responds quickly with 200 OK if Node process + network stack are up.
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Optional deeper readiness check: verifies DB connectivity.
-// DO NOT point ALB health checks here if DB outages would cause scale-out thrash.
 app.get('/ready', (req, res) => {
   db.ping((err) => {
     if (err) {
@@ -59,25 +55,34 @@ app.get('/ready', (req, res) => {
 
 // ------------------------------------------------------
 
-// Serve main page
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "../frontend/signup.html"));
 });
 
 // ===================== SIGNUP ROUTE =====================
 app.post('/signup', (req, res) => {
+  console.log("➡️ Received /signup request with body:", req.body);
+
   const { fullname, email, password, confirmPassword } = req.body;
 
+  if (!fullname || !email || !password || !confirmPassword) {
+    console.warn("⚠️ Missing fields in signup request");
+    return res.status(400).json({ error: 'All fields are required' });
+  }
+
   if (password !== confirmPassword) {
+    console.warn("⚠️ Password mismatch");
     return res.status(400).json({ error: 'Passwords do not match' });
   }
 
   const sql = 'INSERT INTO signup (fullname, email, password) VALUES (?, ?, ?)';
   db.query(sql, [fullname, email, password], (err, result) => {
     if (err) {
-      console.error('Error inserting signup:', err);
-      return res.status(500).json({ error: 'Database error' });
+      console.error("❌ Error inserting into DB:", err.sqlMessage || err.message || err);
+      return res.status(500).json({ error: err.sqlMessage || 'Database error' });
     }
+
+    console.log("✅ Signup successful for:", email);
     res.status(200).json({ message: 'Signup successful' });
   });
 });
