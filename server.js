@@ -7,20 +7,18 @@ const path = require("path");
 const app = express();
 const PORT = 3000;
 
-// Middleware
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-// Debug Logger
+// Logging middleware
 app.use((req, res, next) => {
-  console.log(`[${req.method}] ${req.url}`);
+  console.log(`[${req.method}] ${req.url}`, req.body);
   next();
 });
 
 app.use(express.static(path.join(__dirname, "../frontend")));
 
-// MySQL Connection
 const db = mysql.createConnection({
   host: 'database-1.c3aooyk44z85.us-west-1.rds.amazonaws.com',
   user: 'admin',
@@ -28,7 +26,6 @@ const db = mysql.createConnection({
   database: 'purple'
 });
 
-// Connect to DB
 db.connect((err) => {
   if (err) {
     console.error('❌ DB connection failed:', err);
@@ -37,8 +34,6 @@ db.connect((err) => {
   console.log('✅ Connected to MySQL database');
 });
 
-// ------------------ HEALTH ENDPOINTS ------------------
-
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
@@ -46,55 +41,46 @@ app.get('/health', (req, res) => {
 app.get('/ready', (req, res) => {
   db.ping((err) => {
     if (err) {
-      console.error('DB ping failed:', err);
       return res.status(500).send('DB error');
     }
     res.status(200).send('READY');
   });
 });
 
-// ------------------------------------------------------
-
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "../frontend/signup.html"));
 });
 
-// ===================== SIGNUP ROUTE =====================
+// ===================== SIGNUP =====================
 app.post('/signup', (req, res) => {
-  console.log("➡️ Received /signup request with body:", req.body);
-
   const { fullname, email, password, confirmPassword } = req.body;
 
   if (!fullname || !email || !password || !confirmPassword) {
-    console.warn("⚠️ Missing fields in signup request");
     return res.status(400).json({ error: 'All fields are required' });
   }
 
   if (password !== confirmPassword) {
-    console.warn("⚠️ Password mismatch");
     return res.status(400).json({ error: 'Passwords do not match' });
   }
 
   const sql = 'INSERT INTO signup (fullname, email, password) VALUES (?, ?, ?)';
   db.query(sql, [fullname, email, password], (err, result) => {
     if (err) {
-      console.error("❌ Error inserting into DB:", err.sqlMessage || err.message || err);
-      return res.status(500).json({ error: err.sqlMessage || 'Database error' });
+      console.error("Signup DB error:", err);
+      return res.status(500).json({ error: err.sqlMessage || "Database error" });
     }
 
-    console.log("✅ Signup successful for:", email);
     res.status(200).json({ message: 'Signup successful' });
   });
 });
 
-// ===================== LOGIN ROUTE =====================
+// ===================== LOGIN =====================
 app.post('/login', (req, res) => {
   const { email, password } = req.body;
 
   const sql = 'SELECT * FROM signup WHERE email = ? AND password = ?';
   db.query(sql, [email, password], (err, results) => {
     if (err) {
-      console.error('Login error:', err);
       return res.status(500).json({ error: 'Database error' });
     }
 
@@ -106,7 +92,7 @@ app.post('/login', (req, res) => {
   });
 });
 
-// ===================== CONTACT ROUTE =====================
+// ===================== CONTACT =====================
 app.post('/contact', (req, res) => {
   const { name, email, message } = req.body;
 
@@ -117,7 +103,6 @@ app.post('/contact', (req, res) => {
   const sql = 'INSERT INTO contact (name, email, message) VALUES (?, ?, ?)';
   db.query(sql, [name, email, message], (err, result) => {
     if (err) {
-      console.error('Error inserting contact message:', err);
       return res.status(500).json({ error: 'Database error' });
     }
 
@@ -125,7 +110,6 @@ app.post('/contact', (req, res) => {
   });
 });
 
-// ===================== START SERVER =====================
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running at http://0.0.0.0:${PORT}`);
 });
