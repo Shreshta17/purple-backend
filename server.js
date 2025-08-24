@@ -24,7 +24,7 @@ app.use(express.static(path.join(__dirname, "../frontend")));
 const db = mysql.createConnection({
   host: 'database-1.chu4aekeorf8.us-east-2.rds.amazonaws.com',
   user: 'shreshta',
-  password: 'shreshtarao',  // Update this if needed
+  password: 'honeyrao',  // Update this if needed
   database: 'purple'
 });
 
